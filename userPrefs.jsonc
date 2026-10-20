@@ -12,20 +12,20 @@
   // PSK, empty name, precision 0, not muted, no uplink or downlink). USERPREFS_CHANNELS_TO_WRITE is
   // how many indices are written on first boot and cannot exceed 8.
   // "USERPREFS_BUTTON_PIN": "36",
-  "USERPREFS_CHANNELS_TO_WRITE": "1",
+  "USERPREFS_CHANNELS_TO_WRITE": "2",
   // "USERPREFS_CHANNEL_0_DOWNLINK_ENABLED": "false",
   // "USERPREFS_CHANNEL_0_IS_MUTED": "false",
   "USERPREFS_CHANNEL_0_NAME": "LongMod",
-  // "USERPREFS_CHANNEL_0_PRECISION": "14",
+  "USERPREFS_CHANNEL_0_PRECISION": "14",
   "USERPREFS_CHANNEL_0_PSK": "{ 0x01 }",
   "USERPREFS_CHANNEL_0_UPLINK_ENABLED": "true",
   "USERPREFS_CHANNEL_1_DOWNLINK_ENABLED": "false",
   // "USERPREFS_CHANNEL_1_IS_MUTED": "false",
   "USERPREFS_CHANNEL_1_NAME": "Atomic",
   // "USERPREFS_CHANNEL_1_PRECISION": "14",
-  // "USERPREFS_CHANNEL_1_PSK": "{ 0x4e, 0x22, 0x1d, 0x8b, 0xc3, 0x09, 0x1b, 0xe2, 0x11, 0x9c, 0x89, 0x12, 0xf2, 0x25, 0x19, 0x5d, 0x15, 0x3e, 0x30, 0x7b, 0x86, 0xb6, 0xec, 0xc4, 0x6a, 0xc3, 0x96, 0x5e, 0x9e, 0x10, 0x9d, 0xd5 }",
+  "USERPREFS_CHANNEL_1_PSK": "{ 0x7b, 0xa9, 0x1e, 0x8d, 0x02, 0xc1, 0xc8, 0x40, 0xb8, 0x77, 0xa7, 0x4a, 0x4b, 0xfd, 0xc2, 0xbd, 0xbe, 0x66, 0xe5, 0x83, 0x4e, 0xb8, 0x37, 0xe3, 0x90, 0x17, 0x3c, 0xd8, 0x8f, 0xe7, 0x49, 0xe5 }",
   "USERPREFS_CHANNEL_1_UPLINK_ENABLED": "false",
-  "USERPREFS_CHANNEL_2_DOWNLINK_ENABLED": "false",
+  // "USERPREFS_CHANNEL_2_DOWNLINK_ENABLED": "false",
   // "USERPREFS_CHANNEL_2_IS_MUTED": "false",
   // "USERPREFS_CHANNEL_2_NAME": "YardSale",
   // "USERPREFS_CHANNEL_2_PRECISION": "14",
@@ -37,7 +37,7 @@
   "USERPREFS_CONFIG_LORA_IGNORE_MQTT": "false",
   "USERPREFS_CONFIG_LORA_CONFIG_OK_TO_MQTT": "true",
   // "USERPREFS_LORA_TX_DISABLED": "1", // If set, forces config.lora.tx_enabled=false during lora bootstrap
-  // "USERPREFS_CONFIG_LORA_REGION": "meshtastic_Config_LoRaConfig_RegionCode_US",
+  "USERPREFS_CONFIG_LORA_REGION": "meshtastic_Config_LoRaConfig_RegionCode_RU",
   // "USERPREFS_CONFIG_OWNER_LONG_NAME": "My Long Name",
   // "USERPREFS_CONFIG_OWNER_SHORT_NAME": "MLN",
   // "USERPREFS_CONFIG_DEVICE_ROLE": "meshtastic_Config_DeviceConfig_Role_CLIENT", // Defaults to CLIENT. ROUTER*, and LOST AND FOUND roles are restricted.
@@ -48,10 +48,10 @@
   // "USERPREFS_EVENT_MODE_HOP_LIMIT": "3", // Event-mode default and firmware-generated/relay hop cap (0-7; default 3)
   // "USERPREFS_BLOCK_POSITION_ON_EVENT_CHANNEL": "1", // Block location TX + discard inbound location on channels keyed with USERPREFS_CHANNEL_0_PSK. Defaults off, and must be set explicitly.
   // "USERPREFS_TMM_APPLY_TO_PRIVATE_CHANNELS": "1", // Extend TMM position dedup and precision clamping to private/custom-key channels (default: well-known channels only)
-  "USERPREFS_FIRMWARE_EDITION": "AtomicMesh_v1",
+  // "USERPREFS_FIRMWARE_EDITION": "AtomicMesh_v1",
   // "USERPREFS_FIXED_BLUETOOTH": "121212",
-  // "USERPREFS_FIXED_GPS": "",
-  // "USERPREFS_FIXED_GPS_ALT": "0",
+  "USERPREFS_FIXED_GPS": "1",
+  "USERPREFS_FIXED_GPS_ALT": "188",
   "USERPREFS_FIXED_GPS_LAT": "55.111587",
   "USERPREFS_FIXED_GPS_LON": "36.598157",
   "USERPREFS_CONFIG_SMART_POSITION_ENABLED": "false",
@@ -72,7 +72,7 @@
   // "USERPREFS_USE_ADMIN_KEY_1": "{}",
   // "USERPREFS_USE_ADMIN_KEY_2": "{}",
   // "USERPREFS_CONFIG_SECURITY_IS_MANAGED": "true", // Ignored unless an admin key is also set
-  "USERPREFS_OEM_TEXT": "AtomicMesh",
+  // "USERPREFS_OEM_TEXT": "AtomicMesh",
   // "USERPREFS_OEM_FONT_SIZE": "0",
   // "USERPREFS_OEM_IMAGE_WIDTH": "50",
   // "USERPREFS_OEM_IMAGE_HEIGHT": "28",
