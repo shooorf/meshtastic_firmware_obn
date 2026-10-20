@@ -27,7 +27,7 @@ def readProps(prefsLoc):
         isDirty = (
             subprocess.check_output(["git", "diff", "HEAD"]).decode("utf-8").strip()
         )
-        suffix = sha
+        suffix = "atom-" + sha[:4]
         # if isDirty:
         #     # short for 'dirty', we want to keep our verstrings source for protobuf reasons
         #     suffix = sha + "-d"
@@ -36,7 +36,7 @@ def readProps(prefsLoc):
     except:
         # print("Unexpected error:", sys.exc_info()[0])
         # traceback.print_exc()
-        verObj["long"] = verObj["short"]
+        verObj["long"] = "{}.atom".format(verObj["short"])
         verObj["deb"] = "{}.{}~{}".format(verObj["short"], run_number, build_location)
 
     # print("firmware version " + verStr)
