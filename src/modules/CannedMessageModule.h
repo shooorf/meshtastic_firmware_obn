@@ -1,4 +1,8 @@
 #pragma once
+#include "mesh/generated/meshtastic/cannedmessages.pb.h"
+
+extern meshtastic_CannedMessageModuleConfig cannedMessageModuleConfig;
+
 #if HAS_SCREEN
 #include "ProtobufModule.h"
 #include "input/InputBroker.h"

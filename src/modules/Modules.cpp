@@ -135,9 +135,6 @@ void setupModules()
     }
 #endif
     statusLEDModule = new StatusLEDModule();
-#if !MESHTASTIC_EXCLUDE_REPLYBOT
-    new ReplyBotModule();
-#endif
 
 #if HAS_TRAFFIC_MANAGEMENT && !MESHTASTIC_EXCLUDE_TRAFFIC_MANAGEMENT
     if (moduleConfig.has_traffic_management) {
@@ -216,6 +213,9 @@ void setupModules()
     if (config.display.displaymode != meshtastic_Config_DisplayConfig_DisplayMode_COLOR) {
         cannedMessageModule = new CannedMessageModule();
     }
+#endif
+#if !MESHTASTIC_EXCLUDE_REPLYBOT
+    new ReplyBotModule();
 #endif
 #if HAS_SCREEN && BASEUI_HAS_GAMES
     if (config.display.displaymode != meshtastic_Config_DisplayConfig_DisplayMode_COLOR) {

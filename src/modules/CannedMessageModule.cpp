@@ -1,4 +1,8 @@
 #include "configuration.h"
+#include "mesh/generated/meshtastic/cannedmessages.pb.h"
+
+meshtastic_CannedMessageModuleConfig cannedMessageModuleConfig;
+
 #if ARCH_PORTDUINO
 #include "PortduinoGlue.h"
 #endif
@@ -62,8 +66,6 @@ static NodeNum lastDest = NODENUM_BROADCAST;
 static uint8_t lastChannel = 0;
 static bool lastDestSet = false;
 
-meshtastic_CannedMessageModuleConfig cannedMessageModuleConfig;
-
 CannedMessageModule *cannedMessageModule;
 
 CannedMessageModule::CannedMessageModule()
@@ -76,7 +78,6 @@ CannedMessageModule::CannedMessageModule()
         disable();
     } else {
         LOG_INFO("CannedMessageModule is enabled");
-        moduleConfig.canned_message.enabled = true;
         this->inputObserver.observe(inputBroker);
     }
 }
@@ -2407,9 +2408,7 @@ void CannedMessageModule::handleSetCannedMessageModuleMessages(const char *from_
 
     if (changed) {
         this->saveProtoForModule();
-        if (splitConfiguredMessages()) {
-            moduleConfig.canned_message.enabled = true;
-        }
+        splitConfiguredMessages();
     }
 }
 

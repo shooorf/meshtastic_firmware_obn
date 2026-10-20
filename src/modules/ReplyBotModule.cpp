@@ -3,84 +3,80 @@
 /*
  * ReplyBotModule.cpp
  *
- * This module implements a simple reply bot for the Meshtastic firmware.  It listens for
- * specific text commands ("/ping", "/hello" and "/test") delivered either via a direct
- * message (DM) or a broadcast on the primary channel.  When a supported command is
- * received the bot responds with a short status message that includes the hop count
- * (minimum number of relays), RSSI and SNR of the received packet.  To avoid spamming
- * the network it enforces a per‑sender cooldown between responses.  By default the
- * module is disabled. See the official firmware documentation for guidance on adding modules.
- * To enable this module, set `#undef MESHTASTIC_EXCLUDE_REPLYBOT` in your variant.h file.
+ * This module implements an auto-reply bot configured via CannedMessageModule settings
+ * (moduleConfig.canned_message.enabled and pipe-separated templates in cannedMessageModuleConfig.messages).
+ * When a matching text message is received (DM or broadcast), it replies to the same destination
+ * after a random 5-30s delay with SNR, RSSI, and hop count, enforcing a per-sender cooldown.
  */
 
+#include "CannedMessageModule.h"
 #include "Channels.h"
+#include "FSCommon.h"
 #include "MeshService.h"
 #include "NodeDB.h"
 #include "ReplyBotModule.h"
+#include "SPILock.h"
+#include "Throttle.h"
 #include "mesh/MeshTypes.h"
 
 #include <Arduino.h>
-#include <cctype>
 #include <cstring>
-
-//
-// Rate limiting data structures
-//
-// Each sender is tracked in a small ring buffer.  When a message arrives from a
-// sender we check the last time we responded to them.  If the difference is
-// less than the configured cooldown (different values for DM vs broadcast)
-// the message is ignored; otherwise we update the last response time and
-// proceed with replying.
 
 struct ReplyBotCooldownEntry {
     uint32_t from = 0;
     uint32_t lastMs = 0;
+    bool used = false;
 };
 
-static constexpr uint8_t REPLYBOT_COOLDOWN_SLOTS = 8;          // ring buffer size
-static constexpr uint32_t REPLYBOT_DM_COOLDOWN_MS = 15 * 1000; // 15 seconds for DMs
-static constexpr uint32_t REPLYBOT_LF_COOLDOWN_MS = 60 * 1000; // 60 seconds for LongFast broadcasts
+static constexpr uint8_t REPLYBOT_COOLDOWN_SLOTS = 8;
+static constexpr uint32_t REPLYBOT_COOLDOWN_MS = 30 * 1000;
+static constexpr uint32_t REPLYBOT_DELAY_MIN_MS = 5 * 1000;
+static constexpr uint32_t REPLYBOT_DELAY_MAX_MS = 30 * 1000;
 
 static ReplyBotCooldownEntry replybotCooldown[REPLYBOT_COOLDOWN_SLOTS];
 static uint8_t replybotCooldownIdx = 0;
 
-// Return true if a reply should be rate‑limited for this sender, updating the
-// entry table as needed.
 static bool replybotRateLimited(uint32_t from, uint32_t cooldownMs)
 {
-    const uint32_t now = millis();
+    const uint32_t now = Time::getMillis();
     for (auto &e : replybotCooldown) {
-        if (e.from == from) {
-            // Found existing entry; check if cooldown expired
-            if ((uint32_t)(now - e.lastMs) < cooldownMs) {
+        if (e.used && e.from == from) {
+            if (Throttle::isWithinTimespanMs(e.lastMs, cooldownMs)) {
                 return true;
             }
             e.lastMs = now;
             return false;
         }
     }
-    // No entry found - insert new sender into the ring
     replybotCooldown[replybotCooldownIdx].from = from;
     replybotCooldown[replybotCooldownIdx].lastMs = now;
+    replybotCooldown[replybotCooldownIdx].used = true;
     replybotCooldownIdx = (replybotCooldownIdx + 1) % REPLYBOT_COOLDOWN_SLOTS;
     return false;
 }
 
-// Constructor - registers a single text port and marks the module promiscuous
-// so that broadcast messages on the primary channel are visible.
-ReplyBotModule::ReplyBotModule() : SinglePortModule("replybot", meshtastic_PortNum_TEXT_MESSAGE_APP)
+static bool isAsciiSpace(char c)
+{
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+ReplyBotModule::ReplyBotModule()
+    : SinglePortModule("replybot", meshtastic_PortNum_TEXT_MESSAGE_APP), concurrency::OSThread("ReplyBot")
 {
     isPromiscuous = true;
+    disable();
+#if HAS_SCREEN && !MESHTASTIC_EXCLUDE_CANNEDMESSAGES
+    if (!cannedMessageModule)
+#endif
+    {
+        nodeDB->loadProto("/prefs/cannedConf.proto", meshtastic_CannedMessageModuleConfig_size,
+                          sizeof(meshtastic_CannedMessageModuleConfig), &meshtastic_CannedMessageModuleConfig_msg,
+                          &cannedMessageModuleConfig);
+    }
 }
 
-void ReplyBotModule::setup()
-{
-    // In future we may add a protobuf configuration; for now the module is
-    // always enabled when compiled in.
-}
+void ReplyBotModule::setup() {}
 
-// Determine whether we want to process this packet.  We only care about
-// plain text messages addressed to our port.
 bool ReplyBotModule::wantPacket(const meshtastic_MeshPacket *p)
 {
     return (p && p->decoded.portnum == ourPortNum);
@@ -88,98 +84,214 @@ bool ReplyBotModule::wantPacket(const meshtastic_MeshPacket *p)
 
 ProcessMessage ReplyBotModule::handleReceived(const meshtastic_MeshPacket &mp)
 {
-    // Accept only direct messages to us or broadcasts on the Primary channel
-    // (regardless of modem preset: LongFast, MediumFast, etc).
-
-    const uint32_t ourNode = nodeDB->getNodeNum();
-    const bool isDM = (mp.to == ourNode);
-    const bool isPrimaryChannel = (mp.channel == channels.getPrimaryIndex()) && isBroadcast(mp.to);
-    if (!isDM && !isPrimaryChannel) {
+    if (!moduleConfig.canned_message.enabled || cannedMessageModuleConfig.messages[0] == '\0') {
         return ProcessMessage::CONTINUE;
     }
 
-    // Ignore empty payloads
+    const NodeNum ourNode = nodeDB->getNodeNum();
+    const NodeNum from = getFrom(&mp);
+    if (from == 0 || from == ourNode) {
+        return ProcessMessage::CONTINUE;
+    }
+
+    const bool isDM = (mp.to == ourNode);
+    const bool isBcast = isBroadcast(mp.to);
+    if (!isDM && !isBcast) {
+        return ProcessMessage::CONTINUE;
+    }
+
     if (mp.decoded.payload.size == 0) {
         return ProcessMessage::CONTINUE;
     }
 
-    // Copy payload into a null‑terminated buffer
     char buf[260];
-    memset(buf, 0, sizeof(buf));
     size_t n = mp.decoded.payload.size;
     if (n > sizeof(buf) - 1)
         n = sizeof(buf) - 1;
     memcpy(buf, mp.decoded.payload.bytes, n);
+    buf[n] = '\0';
 
-    // React only to supported slash commands
     if (!isCommand(buf)) {
         return ProcessMessage::CONTINUE;
     }
 
-    // Apply rate limiting per sender depending on DM/broadcast
-    const uint32_t cooldownMs = isDM ? REPLYBOT_DM_COOLDOWN_MS : REPLYBOT_LF_COOLDOWN_MS;
-    if (replybotRateLimited(mp.from, cooldownMs)) {
+    if (replybotRateLimited(from, REPLYBOT_COOLDOWN_MS)) {
         return ProcessMessage::CONTINUE;
     }
 
-    // Compute hop count indicator - if the relay_node is non‑zero we know
-    // there was at least one relay.  Some firmware builds support a hop_start
-    // field which could be used for more accurate counts, but here we use
-    // the available relay_node flag only.
-    // int hopsAway = mp.hop_start - mp.hop_limit;
-    int hopsAway = getHopsAway(mp);
-
-    // Normalize RSSI: if positive adjust down by 200 to align with typical values
-    int rssi = mp.rx_rssi;
-    if (rssi > 0) {
-        rssi -= 200;
-    }
-    float snr = mp.rx_snr;
-
-    // Build the reply message and send it back via DM
-    char reply[96];
-    snprintf(reply, sizeof(reply), "🎙️ Mic Check : %d Hops away | RSSI %d | SNR %.1f", hopsAway, rssi, snr);
-    sendDm(mp, reply);
+    const NodeNum replyTo = isDM ? from : NODENUM_BROADCAST;
+    const uint32_t delayMs = random(REPLYBOT_DELAY_MIN_MS, REPLYBOT_DELAY_MAX_MS + 1);
+    enqueueReply(mp, replyTo, delayMs);
     return ProcessMessage::CONTINUE;
 }
 
-// Check if the message starts with one of the supported commands.  Leading
-// whitespace is skipped and commands must be followed by end‑of‑string or
-// whitespace.
 bool ReplyBotModule::isCommand(const char *msg) const
 {
-    if (!msg)
+    if (!msg || cannedMessageModuleConfig.messages[0] == '\0')
         return false;
-    while (*msg == ' ' || *msg == '\t')
+
+    while (*msg && isAsciiSpace(*msg))
         msg++;
-    auto isEndOrSpace = [](char c) { return c == '\0' || std::isspace(static_cast<unsigned char>(c)); };
-    if (strncmp(msg, "/ping", 5) == 0 && isEndOrSpace(msg[5]))
-        return true;
-    if (strncmp(msg, "/hello", 6) == 0 && isEndOrSpace(msg[6]))
-        return true;
-    if (strncmp(msg, "/test", 5) == 0 && isEndOrSpace(msg[5]))
-        return true;
+    const char *msgEnd = msg + strlen(msg);
+    while (msgEnd > msg && isAsciiSpace(*(msgEnd - 1)))
+        msgEnd--;
+
+    const size_t msgLen = static_cast<size_t>(msgEnd - msg);
+    if (msgLen == 0)
+        return false;
+
+    const char *p = cannedMessageModuleConfig.messages;
+    while (*p) {
+        const char *sep = strchr(p, '|');
+        const char *tokStart = p;
+        const char *tokEnd = sep ? sep : (p + strlen(p));
+
+        while (tokStart < tokEnd && isAsciiSpace(*tokStart))
+            tokStart++;
+        while (tokEnd > tokStart && isAsciiSpace(*(tokEnd - 1)))
+            tokEnd--;
+
+        const size_t tokLen = static_cast<size_t>(tokEnd - tokStart);
+        if (tokLen > 0 && tokLen == msgLen && memcmp(tokStart, msg, msgLen) == 0) {
+            return true;
+        }
+
+        if (!sep)
+            break;
+        p = sep + 1;
+    }
     return false;
 }
 
-// Send a direct message back to the originating node.
-void ReplyBotModule::sendDm(const meshtastic_MeshPacket &rx, const char *text)
+void ReplyBotModule::enqueueReply(const meshtastic_MeshPacket &rx, NodeNum to, uint32_t delayMs)
 {
-    if (!text)
+    const uint32_t now = Time::getMillis();
+    PendingReply *slot = nullptr;
+    for (auto &entry : pendingReplies_) {
+        if (!entry.active) {
+            slot = &entry;
+            break;
+        }
+    }
+    if (!slot)
         return;
+
+    int rssi = rx.rx_rssi;
+    if (rssi > 0) {
+        rssi -= 200;
+    }
+
+    slot->active = true;
+    slot->queuedAtMs = now;
+    slot->delayMs = delayMs;
+    slot->to = to;
+    slot->channel = rx.channel;
+    slot->replyId = rx.id;
+    slot->snr = rx.rx_snr;
+    slot->rssi = rssi;
+    slot->hopsAway = getHopsAway(rx, 0);
+
+    uint32_t nextRunMs = delayMs;
+    for (const auto &entry : pendingReplies_) {
+        if (entry.active) {
+            const uint32_t elapsed = now - entry.queuedAtMs;
+            const uint32_t rem = (elapsed < entry.delayMs) ? (entry.delayMs - elapsed) : 0;
+            if (rem < nextRunMs)
+                nextRunMs = rem;
+        }
+    }
+    setIntervalFromNow(nextRunMs);
+    enabled = true;
+}
+
+int32_t ReplyBotModule::runOnce()
+{
+    const uint32_t now = Time::getMillis();
+    uint32_t nextRunMs = UINT32_MAX;
+    bool anyActive = false;
+
+    for (auto &entry : pendingReplies_) {
+        if (!entry.active)
+            continue;
+        if (Throttle::hasElapsed(entry.queuedAtMs, entry.delayMs)) {
+            entry.active = false;
+            sendReply(entry);
+        } else {
+            anyActive = true;
+            const uint32_t elapsed = now - entry.queuedAtMs;
+            const uint32_t rem = entry.delayMs - elapsed;
+            if (rem < nextRunMs)
+                nextRunMs = rem;
+        }
+    }
+
+    if (!anyActive) {
+        return disable();
+    }
+    return static_cast<int32_t>(nextRunMs);
+}
+
+void ReplyBotModule::sendReply(const PendingReply &item)
+{
+    if (!moduleConfig.canned_message.enabled)
+        return;
+
+    char reply[128];
+    snprintf(reply, sizeof(reply), "Слышу тебя. SNR %.1f RSSI %d, %d хопов", item.snr, static_cast<int>(item.rssi),
+             static_cast<int>(item.hopsAway));
+
     meshtastic_MeshPacket *p = allocDataPacket();
     if (!p)
         return;
-    p->to = rx.from;
-    p->channel = rx.channel;
-    p->want_ack = false;
+    p->to = item.to;
+    p->channel = item.channel;
+    p->decoded.reply_id = item.replyId;
+    p->want_ack = !isBroadcast(item.to);
     p->decoded.want_response = false;
-    size_t len = strlen(text);
+    size_t len = strlen(reply);
     if (len > sizeof(p->decoded.payload.bytes)) {
         len = sizeof(p->decoded.payload.bytes);
     }
     p->decoded.payload.size = len;
-    memcpy(p->decoded.payload.bytes, text, len);
-    service->sendToMesh(p);
+    memcpy(p->decoded.payload.bytes, reply, len);
+    service->sendToMesh(p, RX_SRC_LOCAL, true);
+}
+
+AdminMessageHandleResult ReplyBotModule::handleAdminMessageForModule(const meshtastic_MeshPacket &mp,
+                                                                     meshtastic_AdminMessage *request,
+                                                                     meshtastic_AdminMessage *response)
+{
+#if HAS_SCREEN && !MESHTASTIC_EXCLUDE_CANNEDMESSAGES
+    if (cannedMessageModule)
+        return AdminMessageHandleResult::NOT_HANDLED;
+#endif
+    switch (request->which_payload_variant) {
+    case meshtastic_AdminMessage_get_canned_message_module_messages_request_tag:
+        if (mp.decoded.want_response) {
+            response->which_payload_variant = meshtastic_AdminMessage_get_canned_message_module_messages_response_tag;
+            strncpy(response->get_canned_message_module_messages_response, cannedMessageModuleConfig.messages,
+                    sizeof(response->get_canned_message_module_messages_response));
+        }
+        return AdminMessageHandleResult::HANDLED_WITH_RESPONSE;
+
+    case meshtastic_AdminMessage_set_canned_message_module_messages_tag:
+        if (*request->set_canned_message_module_messages &&
+            strcmp(cannedMessageModuleConfig.messages, request->set_canned_message_module_messages) != 0) {
+            strncpy(cannedMessageModuleConfig.messages, request->set_canned_message_module_messages,
+                    sizeof(cannedMessageModuleConfig.messages));
+            cannedMessageModuleConfig.messages[sizeof(cannedMessageModuleConfig.messages) - 1] = '\0';
+#ifdef FSCom
+            spiLock->lock();
+            FSCom.mkdir("/prefs");
+            spiLock->unlock();
+#endif
+            nodeDB->saveProto("/prefs/cannedConf.proto", meshtastic_CannedMessageModuleConfig_size,
+                              &meshtastic_CannedMessageModuleConfig_msg, &cannedMessageModuleConfig);
+        }
+        return AdminMessageHandleResult::HANDLED;
+
+    default:
+        return AdminMessageHandleResult::NOT_HANDLED;
+    }
 }
 #endif // MESHTASTIC_EXCLUDE_REPLYBOT

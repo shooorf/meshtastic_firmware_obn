@@ -184,7 +184,7 @@ const RegionInfo regions[] = {
         Note:
             - We do LBT, so 100% is allowed.
      */
-    RDEF(RU, 868.7f, 869.2f, 100, 20, false, false, PROFILE_STD, PRESET(LONG_FAST), 0),
+    RDEF(RU, 868.7f, 869.2f, 100, 27, false, false, PROFILE_STD, PRESET(LONG_FAST), 0),
 
     /*
         https://www.law.go.kr/LSW/admRulLsInfoP.do?admRulId=53943&efYd=0
