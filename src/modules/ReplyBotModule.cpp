@@ -17,6 +17,7 @@
 #include "ReplyBotModule.h"
 #include "SPILock.h"
 #include "Throttle.h"
+#include "UptimeClock.h"
 #include "mesh/MeshTypes.h"
 
 #include <Arduino.h>
