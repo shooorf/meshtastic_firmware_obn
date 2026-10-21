@@ -1,5 +1,6 @@
 #pragma once
 #include "../mesh/generated/meshtastic/telemetry.pb.h"
+#include "NodeDB.h"
 #include "ProtobufModule.h"
 
 class HostMetricsModule : private concurrency::OSThread, public ProtobufModule<meshtastic_Telemetry>
@@ -12,6 +13,7 @@ class HostMetricsModule : private concurrency::OSThread, public ProtobufModule<m
         : concurrency::OSThread("HostMetrics"),
           ProtobufModule("HostMetrics", meshtastic_PortNum_TELEMETRY_APP, &meshtastic_Telemetry_msg)
     {
+        loopbackOk = true;
         nodeStatusObserver.observe(&nodeStatus->onNewStatus);
         setIntervalFromNow(setStartDelay()); // Wait until NodeInfo is sent
     }
@@ -22,15 +24,15 @@ class HostMetricsModule : private concurrency::OSThread, public ProtobufModule<m
     @return true if you've guaranteed you've handled this message and no other handlers should be considered for it
     */
     virtual bool handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshtastic_Telemetry *p) override;
-    // virtual meshtastic_MeshPacket *allocReply() override;
+    virtual meshtastic_MeshPacket *allocReply() override;
     virtual int32_t runOnce() override;
     /**
      * Send our Telemetry into the mesh
      */
-    bool sendMetrics();
+    bool sendMetrics(bool phoneOnly = false);
 
   private:
     meshtastic_Telemetry getHostMetrics();
 
-    uint32_t lastSentToMesh = 0;
+    uint32_t sendToPhoneIntervalMs = SECONDS_IN_MINUTE * 1000;
 };

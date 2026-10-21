@@ -1,23 +1,22 @@
 #include "HostMetrics.h"
 #include "../mesh/generated/meshtastic/telemetry.pb.h"
+#include "Default.h"
 #include "MeshService.h"
-#if ARCH_PORTDUINO
-#include "PortduinoGlue.h"
-#include <filesystem>
-#endif
+#include "NodeDB.h"
+#include "UptimeClock.h"
+#include "gps/RTC.h"
+#include "main.h"
+#include "memGet.h"
+#include <cmath>
+#include <cstdio>
+#include <cstring>
 
 int32_t HostMetricsModule::runOnce()
 {
-#if ARCH_PORTDUINO
-    if (portduino_config.hostMetrics_interval == 0) {
-        return disable();
-    } else {
-        sendMetrics();
-        return 60 * 1000 * portduino_config.hostMetrics_interval;
+    if (service && service->isToPhoneQueueEmpty()) {
+        sendMetrics(true);
     }
-#else
-    return disable();
-#endif
+    return sendToPhoneIntervalMs;
 }
 
 bool HostMetricsModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshtastic_Telemetry *t)
@@ -28,114 +27,114 @@ bool HostMetricsModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, 
         if (t->variant.host_metrics.has_user_string)
             t->variant.host_metrics.user_string[sizeof(t->variant.host_metrics.user_string) - 1] = '\0';
 
-        LOG_INFO("(Received Host Metrics from %s): uptime=%u, diskfree=%lu, memory free=%lu, load=%04.2f, %04.2f, %04.2f", sender,
-                 t->variant.host_metrics.uptime_seconds, t->variant.host_metrics.diskfree1_bytes,
-                 t->variant.host_metrics.freemem_bytes, static_cast<float>(t->variant.host_metrics.load1) / 100,
+        LOG_INFO("(Received Host Metrics from %s): uptime=%u, freemem=%lu, load=%04.2f, %04.2f, %04.2f", sender,
+                 t->variant.host_metrics.uptime_seconds, (unsigned long)t->variant.host_metrics.freemem_bytes,
+                 static_cast<float>(t->variant.host_metrics.load1) / 100,
                  static_cast<float>(t->variant.host_metrics.load5) / 100,
                  static_cast<float>(t->variant.host_metrics.load15) / 100);
-        // t->variant.host_metrics.has_user_string ? t->variant.host_metrics.user_string : "");
 #endif
     }
     return false; // Let others look at this message also if they want
 }
 
-/*
 meshtastic_MeshPacket *HostMetricsModule::allocReply()
 {
     if (currentRequest) {
         auto req = *currentRequest;
         const auto &p = req.decoded;
         meshtastic_Telemetry scratch;
-        meshtastic_Telemetry *decoded = NULL;
         memset(&scratch, 0, sizeof(scratch));
-        if (pb_decode_from_bytes(p.payload.bytes, p.payload.size, &meshtastic_HostMetrics_msg, &scratch)) {
-            decoded = &scratch;
+        if (pb_decode_from_bytes(p.payload.bytes, p.payload.size, &meshtastic_Telemetry_msg, &scratch)) {
+            if (scratch.which_variant == meshtastic_Telemetry_host_metrics_tag) {
+                LOG_INFO("HostMetrics reply to request");
+                return allocDataProtobuf(getHostMetrics());
+            }
         } else {
             LOG_ERROR("Can't decode HostMetrics module");
-            return NULL;
-        }
-        // Check for a request for device metrics
-        if (decoded->which_variant == meshtastic_Telemetry_host_metrics_tag) {
-            LOG_INFO("Device telemetry reply to request");
-            return allocDataProtobuf(getHostMetrics());
         }
     }
     return NULL;
 }
-    */
 
-#if ARCH_PORTDUINO
 meshtastic_Telemetry HostMetricsModule::getHostMetrics()
 {
-    std::string file_line;
     meshtastic_Telemetry t = meshtastic_Telemetry_init_zero;
+    t.time = getTime();
     t.which_variant = meshtastic_Telemetry_host_metrics_tag;
     t.variant.host_metrics = meshtastic_HostMetrics_init_zero;
+    t.variant.host_metrics.uptime_seconds = Time::getUptimeSecs();
+    t.variant.host_metrics.freemem_bytes = memGet.getFreeHeap();
 
-    if (access("/proc/uptime", R_OK) == 0) {
-        std::ifstream proc_uptime("/proc/uptime");
-        if (proc_uptime.is_open()) {
-            std::getline(proc_uptime, file_line, ' ');
-            proc_uptime.close();
-            t.variant.host_metrics.uptime_seconds = stoul(file_line);
+    uint16_t directCount = 0;
+    uint16_t directSnrNegCount = 0;
+    uint8_t listedCount = 0;
+    char *userStr = t.variant.host_metrics.user_string;
+    const size_t userStrCap = sizeof(t.variant.host_metrics.user_string);
+    size_t pos = 0;
+    userStr[0] = '\0';
+
+    const NodeNum ourNode = nodeDB ? nodeDB->getNodeNum() : 0;
+    const size_t totalNodes = nodeDB ? nodeDB->getNumMeshNodes() : 0;
+    for (size_t i = 0; i < totalNodes; i++) {
+        const meshtastic_NodeInfoLite *node = nodeDB->getMeshNodeByIndex(i);
+        if (!node || node->num == ourNode || node->num == 0 || node->num == NODENUM_BROADCAST)
+            continue;
+        if (!node->has_hops_away || node->hops_away != 0)
+            continue;
+        if (!nodeInfoLiteHasSnr(node) || nodeInfoLiteViaMqtt(node))
+            continue;
+        if (sinceLastSeen(node) >= NEXTHOP_NEIGHBOR_FRESH_SECS)
+            continue;
+
+        directCount++;
+        if (node->snr < 0.0f) {
+            directSnrNegCount++;
+        }
+
+        if (listedCount < 16) {
+            char shortName[5] = "????";
+            if (nodeInfoLiteHasUser(node) && node->short_name[0] != '\0') {
+                strncpy(shortName, node->short_name, 4);
+                shortName[4] = '\0';
+            }
+            int snrInt = static_cast<int>(std::lround(node->snr));
+            if (snrInt > 99)
+                snrInt = 99;
+            else if (snrInt < -99)
+                snrInt = -99;
+
+            const char *prefix = (listedCount > 0) ? ", " : "";
+            int written = snprintf(userStr + pos, userStrCap - pos, "%s%s:%+03d", prefix, shortName, snrInt);
+            if (written > 0 && pos + static_cast<size_t>(written) < userStrCap) {
+                pos += static_cast<size_t>(written);
+                listedCount++;
+            }
         }
     }
 
-    std::filesystem::space_info root = std::filesystem::space("/");
-    t.variant.host_metrics.diskfree1_bytes = root.available;
+    t.variant.host_metrics.load1 = (directCount > 655) ? 65500 : static_cast<uint16_t>(directCount * 100);
+    t.variant.host_metrics.load5 = (directSnrNegCount > 655) ? 65500 : static_cast<uint16_t>(directSnrNegCount * 100);
+    t.variant.host_metrics.load15 = 0;
+    if (pos > 0) {
+        t.variant.host_metrics.has_user_string = true;
+    }
 
-    if (access("/proc/meminfo", R_OK) == 0) {
-        std::ifstream proc_meminfo("/proc/meminfo");
-        if (proc_meminfo.is_open()) {
-            do {
-                std::getline(proc_meminfo, file_line);
-            } while (file_line.find("MemAvailable") == std::string::npos);
-            proc_meminfo.close();
-            t.variant.host_metrics.freemem_bytes = stoull(file_line.substr(file_line.find_first_of("0123456789"))) * 1024;
-        }
-    }
-    if (access("/proc/loadavg", R_OK) == 0) {
-        std::ifstream proc_loadavg("/proc/loadavg");
-        if (proc_loadavg.is_open()) {
-            std::getline(proc_loadavg, file_line, ' ');
-            t.variant.host_metrics.load1 = stof(file_line) * 100;
-            std::getline(proc_loadavg, file_line, ' ');
-            t.variant.host_metrics.load5 = stof(file_line) * 100;
-            std::getline(proc_loadavg, file_line, ' ');
-            t.variant.host_metrics.load15 = stof(file_line) * 100;
-            proc_loadavg.close();
-        }
-    }
-    if (portduino_config.hostMetrics_user_command != "") {
-        std::string userCommandResult = exec(portduino_config.hostMetrics_user_command.c_str());
-        if (userCommandResult.length() > 1) {
-            strncpy(t.variant.host_metrics.user_string, userCommandResult.c_str(), sizeof(t.variant.host_metrics.user_string));
-            t.variant.host_metrics.user_string[sizeof(t.variant.host_metrics.user_string) - 1] = '\0';
-            t.variant.host_metrics.has_user_string = true;
-        }
-    }
     return t;
 }
 
-bool HostMetricsModule::sendMetrics()
+bool HostMetricsModule::sendMetrics(bool phoneOnly)
 {
     meshtastic_Telemetry telemetry = getHostMetrics();
-    LOG_INFO("Send: uptime=%u, diskfree=%lu, memory free=%lu, load=%04.2f, %04.2f, %04.2f",
-             telemetry.variant.host_metrics.uptime_seconds, telemetry.variant.host_metrics.diskfree1_bytes,
-             telemetry.variant.host_metrics.freemem_bytes, static_cast<float>(telemetry.variant.host_metrics.load1) / 100,
-             static_cast<float>(telemetry.variant.host_metrics.load5) / 100,
-             static_cast<float>(telemetry.variant.host_metrics.load15) / 100);
-    // telemetry.variant.host_metrics.has_user_string ? telemetry.variant.host_metrics.user_string : "");
-
     meshtastic_MeshPacket *p = allocDataProtobuf(telemetry);
     if (!p)
         return false;
     p->to = NODENUM_BROADCAST;
     p->decoded.want_response = false;
     p->priority = meshtastic_MeshPacket_Priority_BACKGROUND;
-    p->channel = portduino_config.hostMetrics_channel;
-    LOG_INFO("Send packet to mesh");
-    service->sendToMesh(p, RX_SRC_LOCAL, true);
+    if (phoneOnly) {
+        service->sendToPhone(p);
+    } else {
+        service->sendToMesh(p, RX_SRC_LOCAL, true);
+    }
     return true;
 }
-#endif

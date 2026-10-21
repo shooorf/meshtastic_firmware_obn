@@ -64,13 +64,13 @@
 #include "modules/WaypointModule.h"
 #endif
 #if ARCH_PORTDUINO
-#include "modules/Telemetry/HostMetrics.h"
 #if !MESHTASTIC_EXCLUDE_STOREFORWARD
 #include "modules/StoreForwardModule.h"
 #endif
 #endif
 #if HAS_TELEMETRY
 #include "modules/Telemetry/DeviceTelemetry.h"
+#include "modules/Telemetry/HostMetrics.h"
 #endif
 #if HAS_SENSOR && !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR
 #include "main.h"
@@ -222,11 +222,9 @@ void setupModules()
         gamesModule = new GamesModule();
     }
 #endif
-#if ARCH_PORTDUINO
-    new HostMetricsModule();
-#endif
 #if HAS_TELEMETRY
     new DeviceTelemetryModule();
+    new HostMetricsModule();
 #endif
 #if HAS_TELEMETRY && HAS_SENSOR && !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR
     if (moduleConfig.has_telemetry &&
