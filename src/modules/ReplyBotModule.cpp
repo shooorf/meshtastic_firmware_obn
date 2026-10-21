@@ -4,7 +4,7 @@
  * ReplyBotModule.cpp
  *
  * This module implements an auto-reply bot configured via CannedMessageModule settings
- * (moduleConfig.canned_message.enabled and pipe-separated templates in cannedMessageModuleConfig.messages).
+ * (moduleConfig.canned_message.send_bell and pipe-separated templates in cannedMessageModuleConfig.messages).
  * When a matching text message is received (DM or broadcast), it replies to the same destination
  * after a random 5-30s delay with SNR, RSSI, and hop count, enforcing a per-sender cooldown.
  */
@@ -19,6 +19,8 @@
 #include "Throttle.h"
 #include "UptimeClock.h"
 #include "mesh/MeshTypes.h"
+#include "meshUtils.h"
+#include "utf8.h"
 
 #include <Arduino.h>
 #include <cstring>
@@ -33,6 +35,7 @@ static constexpr uint8_t REPLYBOT_COOLDOWN_SLOTS = 8;
 static constexpr uint32_t REPLYBOT_COOLDOWN_MS = 30 * 1000;
 static constexpr uint32_t REPLYBOT_DELAY_MIN_MS = 5 * 1000;
 static constexpr uint32_t REPLYBOT_DELAY_MAX_MS = 30 * 1000;
+static constexpr size_t REPLYBOT_MAX_WORD_CHARS = 12;
 
 static ReplyBotCooldownEntry replybotCooldown[REPLYBOT_COOLDOWN_SLOTS];
 static uint8_t replybotCooldownIdx = 0;
@@ -73,6 +76,15 @@ ReplyBotModule::ReplyBotModule()
         nodeDB->loadProto("/prefs/cannedConf.proto", meshtastic_CannedMessageModuleConfig_size,
                           sizeof(meshtastic_CannedMessageModuleConfig), &meshtastic_CannedMessageModuleConfig_msg,
                           &cannedMessageModuleConfig);
+        cannedMessageModuleConfig.messages[sizeof(cannedMessageModuleConfig.messages) - 1] = '\0';
+    }
+    if (cannedMessageModuleConfig.messages[0] == '\0') {
+#ifdef USERPREFS_CANNED_MESSAGES
+        strncpy(cannedMessageModuleConfig.messages, USERPREFS_CANNED_MESSAGES, sizeof(cannedMessageModuleConfig.messages));
+#else
+        strncpy(cannedMessageModuleConfig.messages, "Hi|Bye|Yes|No|Ok", sizeof(cannedMessageModuleConfig.messages));
+#endif
+        cannedMessageModuleConfig.messages[sizeof(cannedMessageModuleConfig.messages) - 1] = '\0';
     }
 }
 
@@ -85,7 +97,7 @@ bool ReplyBotModule::wantPacket(const meshtastic_MeshPacket *p)
 
 ProcessMessage ReplyBotModule::handleReceived(const meshtastic_MeshPacket &mp)
 {
-    if (!moduleConfig.canned_message.enabled || cannedMessageModuleConfig.messages[0] == '\0') {
+    if (!moduleConfig.canned_message.send_bell || cannedMessageModuleConfig.messages[0] == '\0') {
         return ProcessMessage::CONTINUE;
     }
 
@@ -138,8 +150,16 @@ bool ReplyBotModule::isCommand(const char *msg) const
         msgEnd--;
 
     const size_t msgLen = static_cast<size_t>(msgEnd - msg);
-    if (msgLen == 0)
+    if (msgLen == 0 || msgLen > REPLYBOT_MAX_WORD_CHARS * 4)
         return false;
+
+    char cleanMsg[REPLYBOT_MAX_WORD_CHARS * 4 + 1];
+    memcpy(cleanMsg, msg, msgLen);
+    cleanMsg[msgLen] = '\0';
+    sanitizeUtf8(cleanMsg, sizeof(cleanMsg));
+    if (cleanMsg[0] == '\0' || utf8len(cleanMsg) > REPLYBOT_MAX_WORD_CHARS)
+        return false;
+    utf8lwr(cleanMsg);
 
     const char *p = cannedMessageModuleConfig.messages;
     while (*p) {
@@ -153,8 +173,17 @@ bool ReplyBotModule::isCommand(const char *msg) const
             tokEnd--;
 
         const size_t tokLen = static_cast<size_t>(tokEnd - tokStart);
-        if (tokLen > 0 && tokLen == msgLen && memcmp(tokStart, msg, msgLen) == 0) {
-            return true;
+        if (tokLen > 0 && tokLen <= REPLYBOT_MAX_WORD_CHARS * 4) {
+            char cleanTok[REPLYBOT_MAX_WORD_CHARS * 4 + 1];
+            memcpy(cleanTok, tokStart, tokLen);
+            cleanTok[tokLen] = '\0';
+            sanitizeUtf8(cleanTok, sizeof(cleanTok));
+            if (cleanTok[0] != '\0' && utf8len(cleanTok) <= REPLYBOT_MAX_WORD_CHARS) {
+                utf8lwr(cleanTok);
+                if (strcmp(cleanTok, cleanMsg) == 0) {
+                    return true;
+                }
+            }
         }
 
         if (!sep)
@@ -234,7 +263,7 @@ int32_t ReplyBotModule::runOnce()
 
 void ReplyBotModule::sendReply(const PendingReply &item)
 {
-    if (!moduleConfig.canned_message.enabled)
+    if (!moduleConfig.canned_message.send_bell)
         return;
 
     char reply[128];
@@ -272,22 +301,28 @@ AdminMessageHandleResult ReplyBotModule::handleAdminMessageForModule(const mesht
             response->which_payload_variant = meshtastic_AdminMessage_get_canned_message_module_messages_response_tag;
             strncpy(response->get_canned_message_module_messages_response, cannedMessageModuleConfig.messages,
                     sizeof(response->get_canned_message_module_messages_response));
+            response->get_canned_message_module_messages_response
+                [sizeof(response->get_canned_message_module_messages_response) - 1] = '\0';
         }
         return AdminMessageHandleResult::HANDLED_WITH_RESPONSE;
 
     case meshtastic_AdminMessage_set_canned_message_module_messages_tag:
-        if (*request->set_canned_message_module_messages &&
-            strcmp(cannedMessageModuleConfig.messages, request->set_canned_message_module_messages) != 0) {
-            strncpy(cannedMessageModuleConfig.messages, request->set_canned_message_module_messages,
-                    sizeof(cannedMessageModuleConfig.messages));
-            cannedMessageModuleConfig.messages[sizeof(cannedMessageModuleConfig.messages) - 1] = '\0';
+        if (*request->set_canned_message_module_messages) {
+            char clean[sizeof(cannedMessageModuleConfig.messages)];
+            strncpy(clean, request->set_canned_message_module_messages, sizeof(clean));
+            clean[sizeof(clean) - 1] = '\0';
+            sanitizeUtf8(clean, sizeof(clean));
+            if (clean[0] != '\0' && strcmp(cannedMessageModuleConfig.messages, clean) != 0) {
+                strncpy(cannedMessageModuleConfig.messages, clean, sizeof(cannedMessageModuleConfig.messages));
+                cannedMessageModuleConfig.messages[sizeof(cannedMessageModuleConfig.messages) - 1] = '\0';
 #ifdef FSCom
-            spiLock->lock();
-            FSCom.mkdir("/prefs");
-            spiLock->unlock();
+                spiLock->lock();
+                FSCom.mkdir("/prefs");
+                spiLock->unlock();
 #endif
-            nodeDB->saveProto("/prefs/cannedConf.proto", meshtastic_CannedMessageModuleConfig_size,
-                              &meshtastic_CannedMessageModuleConfig_msg, &cannedMessageModuleConfig);
+                nodeDB->saveProto("/prefs/cannedConf.proto", meshtastic_CannedMessageModuleConfig_size,
+                                  &meshtastic_CannedMessageModuleConfig_msg, &cannedMessageModuleConfig);
+            }
         }
         return AdminMessageHandleResult::HANDLED;
 

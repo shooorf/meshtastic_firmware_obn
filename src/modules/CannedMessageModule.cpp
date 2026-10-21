@@ -78,6 +78,7 @@ CannedMessageModule::CannedMessageModule()
         disable();
     } else {
         LOG_INFO("CannedMessageModule is enabled");
+        moduleConfig.canned_message.enabled = true;
         this->inputObserver.observe(inputBroker);
     }
 }
@@ -2312,7 +2313,8 @@ void CannedMessageModule::loadProtoForModule()
 {
     if (nodeDB->loadProto(cannedMessagesConfigFile, meshtastic_CannedMessageModuleConfig_size,
                           sizeof(meshtastic_CannedMessageModuleConfig), &meshtastic_CannedMessageModuleConfig_msg,
-                          &cannedMessageModuleConfig) != LoadFileResult::LOAD_SUCCESS) {
+                          &cannedMessageModuleConfig) != LoadFileResult::LOAD_SUCCESS ||
+        cannedMessageModuleConfig.messages[0] == '\0') {
         installDefaultCannedMessageModuleConfig();
     }
 }
@@ -2408,7 +2410,9 @@ void CannedMessageModule::handleSetCannedMessageModuleMessages(const char *from_
 
     if (changed) {
         this->saveProtoForModule();
-        splitConfiguredMessages();
+        if (splitConfiguredMessages()) {
+            moduleConfig.canned_message.enabled = true;
+        }
     }
 }
 
