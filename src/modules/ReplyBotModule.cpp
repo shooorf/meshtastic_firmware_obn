@@ -35,7 +35,7 @@ static constexpr uint8_t REPLYBOT_COOLDOWN_SLOTS = 8;
 static constexpr uint32_t REPLYBOT_COOLDOWN_MS = 30 * 1000;
 static constexpr uint32_t REPLYBOT_DELAY_MIN_MS = 5 * 1000;
 static constexpr uint32_t REPLYBOT_DELAY_MAX_MS = 30 * 1000;
-static constexpr size_t REPLYBOT_MAX_WORD_CHARS = 12;
+static constexpr size_t REPLYBOT_MAX_WORD_BYTES = 24;
 
 static ReplyBotCooldownEntry replybotCooldown[REPLYBOT_COOLDOWN_SLOTS];
 static uint8_t replybotCooldownIdx = 0;
@@ -113,14 +113,12 @@ ProcessMessage ReplyBotModule::handleReceived(const meshtastic_MeshPacket &mp)
         return ProcessMessage::CONTINUE;
     }
 
-    if (mp.decoded.payload.size == 0) {
+    if (mp.decoded.payload.size == 0 || mp.decoded.payload.size > REPLYBOT_MAX_WORD_BYTES) {
         return ProcessMessage::CONTINUE;
     }
 
-    char buf[260];
-    size_t n = mp.decoded.payload.size;
-    if (n > sizeof(buf) - 1)
-        n = sizeof(buf) - 1;
+    char buf[REPLYBOT_MAX_WORD_BYTES + 1];
+    const size_t n = mp.decoded.payload.size;
     memcpy(buf, mp.decoded.payload.bytes, n);
     buf[n] = '\0';
 
@@ -150,14 +148,14 @@ bool ReplyBotModule::isCommand(const char *msg) const
         msgEnd--;
 
     const size_t msgLen = static_cast<size_t>(msgEnd - msg);
-    if (msgLen == 0 || msgLen > REPLYBOT_MAX_WORD_CHARS * 4)
+    if (msgLen == 0 || msgLen > REPLYBOT_MAX_WORD_BYTES)
         return false;
 
-    char cleanMsg[REPLYBOT_MAX_WORD_CHARS * 4 + 1];
+    char cleanMsg[REPLYBOT_MAX_WORD_BYTES + 1];
     memcpy(cleanMsg, msg, msgLen);
     cleanMsg[msgLen] = '\0';
     sanitizeUtf8(cleanMsg, sizeof(cleanMsg));
-    if (cleanMsg[0] == '\0' || utf8len(cleanMsg) > REPLYBOT_MAX_WORD_CHARS)
+    if (cleanMsg[0] == '\0')
         return false;
     utf8lwr(cleanMsg);
 
@@ -173,12 +171,12 @@ bool ReplyBotModule::isCommand(const char *msg) const
             tokEnd--;
 
         const size_t tokLen = static_cast<size_t>(tokEnd - tokStart);
-        if (tokLen > 0 && tokLen <= REPLYBOT_MAX_WORD_CHARS * 4) {
-            char cleanTok[REPLYBOT_MAX_WORD_CHARS * 4 + 1];
+        if (tokLen > 0 && tokLen <= REPLYBOT_MAX_WORD_BYTES) {
+            char cleanTok[REPLYBOT_MAX_WORD_BYTES + 1];
             memcpy(cleanTok, tokStart, tokLen);
             cleanTok[tokLen] = '\0';
             sanitizeUtf8(cleanTok, sizeof(cleanTok));
-            if (cleanTok[0] != '\0' && utf8len(cleanTok) <= REPLYBOT_MAX_WORD_CHARS) {
+            if (cleanTok[0] != '\0') {
                 utf8lwr(cleanTok);
                 if (strcmp(cleanTok, cleanMsg) == 0) {
                     return true;
