@@ -107,6 +107,10 @@ ProcessMessage ReplyBotModule::handleReceived(const meshtastic_MeshPacket &mp)
         return ProcessMessage::CONTINUE;
     }
 
+    if (mp.via_mqtt || mp.transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT) {
+        return ProcessMessage::CONTINUE;
+    }
+
     const bool isDM = (mp.to == ourNode);
     const bool isBcast = isBroadcast(mp.to);
     if (!isDM && !isBcast) {
@@ -218,6 +222,7 @@ void ReplyBotModule::enqueueReply(const meshtastic_MeshPacket &rx, NodeNum to, u
     slot->snr = rx.rx_snr;
     slot->rssi = rssi;
     slot->hopsAway = getHopsAway(rx, 0);
+    slot->relayNode = rx.relay_node;
 
     uint32_t nextRunMs = delayMs;
     for (const auto &entry : pendingReplies_) {
@@ -265,8 +270,24 @@ void ReplyBotModule::sendReply(const PendingReply &item)
         return;
 
     char reply[128];
-    snprintf(reply, sizeof(reply), "Слышу тебя. SNR %.1f RSSI %d, %d хопов", item.snr, static_cast<int>(item.rssi),
-             static_cast<int>(item.hopsAway));
+    if (item.hopsAway <= 0) {
+        snprintf(reply, sizeof(reply), "Слышу тебя. SNR %.1f RSSI %d, %d хопов", item.snr, static_cast<int>(item.rssi),
+                 static_cast<int>(item.hopsAway));
+    } else {
+        const char *relayName = "ретранслятор";
+        if (nodeDB && item.relayNode != 0) {
+            NodeNum relayNum = 0;
+            if (nodeDB->resolveUniqueLastByte(item.relayNode, true, &relayNum) ||
+                nodeDB->resolveUniqueLastByte(item.relayNode, false, &relayNum)) {
+                const meshtastic_NodeInfoLite *relay = nodeDB->getMeshNode(relayNum);
+                if (relay && nodeInfoLiteHasUser(relay) && relay->short_name[0] != '\0') {
+                    relayName = relay->short_name;
+                }
+            }
+        }
+        snprintf(reply, sizeof(reply), "Слышу тебя, %d хопов (%s SNR %.1f RSSI %d)", static_cast<int>(item.hopsAway),
+                 relayName, item.snr, static_cast<int>(item.rssi));
+    }
 
     meshtastic_MeshPacket *p = allocDataPacket();
     if (!p)

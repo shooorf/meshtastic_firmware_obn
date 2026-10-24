@@ -30,6 +30,7 @@ class ReplyBotModule : public SinglePortModule, private concurrency::OSThread
         float snr = 0.0f;
         int32_t rssi = 0;
         int8_t hopsAway = 0;
+        uint8_t relayNode = 0;
     };
 
     static constexpr uint8_t MAX_PENDING_REPLIES = 4;
