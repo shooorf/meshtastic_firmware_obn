@@ -59,9 +59,10 @@ meshtastic_MeshPacket *HostMetricsModule::allocReply()
 meshtastic_Telemetry HostMetricsModule::getHostMetrics()
 {
     meshtastic_Telemetry t = meshtastic_Telemetry_init_zero;
+    meshtastic_HostMetrics hm = meshtastic_HostMetrics_init_zero;
     t.time = getTime();
     t.which_variant = meshtastic_Telemetry_host_metrics_tag;
-    t.variant.host_metrics = meshtastic_HostMetrics_init_zero;
+    t.variant.host_metrics = hm;
     t.variant.host_metrics.uptime_seconds = Time::getUptimeSecs();
     t.variant.host_metrics.freemem_bytes = memGet.getFreeHeap();
 
