@@ -41,7 +41,7 @@
   // "USERPREFS_CONFIG_OWNER_LONG_NAME": "My Long Name",
   // "USERPREFS_CONFIG_OWNER_SHORT_NAME": "MLN",
   // "USERPREFS_CONFIG_DEVICE_ROLE": "meshtastic_Config_DeviceConfig_Role_CLIENT", // Defaults to CLIENT. ROUTER*, and LOST AND FOUND roles are restricted.
-  // "USERPREFS_CONFIG_DEVICE_REBROADCAST_MODE": "meshtastic_Config_DeviceConfig_RebroadcastMode_LOCAL_ONLY", // NONE falls back to ALL on a router role
+  "USERPREFS_CONFIG_DEVICE_REBROADCAST_MODE": "meshtastic_Config_DeviceConfig_RebroadcastMode_CORE_PORTNUMS_ONLY", // NONE falls back to ALL on a router role
   "USERPREFS_CONFIG_DEVICE_NODE_INFO_BROADCAST_SECS": "10800", // Clamped to 3600 .. INT32_MAX
   "USERPREFS_CANNED_MESSAGES": "ping|test|check",
   // "USERPREFS_EVENT_MODE": "1",
