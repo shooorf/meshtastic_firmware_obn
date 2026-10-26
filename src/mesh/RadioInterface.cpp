@@ -1,4 +1,5 @@
 #include "RadioInterface.h"
+#include "ChainRelayPolicy.h"
 #include "Channels.h"
 #include "DisplayFormatters.h"
 #include "LLCC68Interface.h"
@@ -867,7 +868,7 @@ uint32_t RadioInterface::getTxDelayMsecWeighted(meshtastic_MeshPacket *p)
 {
     //  high SNR = large CW size (Long Delay)
     //  low SNR = small CW size (Short Delay)
-    float snr = p->rx_snr;
+    float snr = ChainRelayPolicy::getAdjustedRxSnr(p->rx_snr);
     uint32_t delay = 0;
     uint8_t CWsize = getCWsize(snr);
     // LOG_DEBUG("rx_snr of %f so setting CWsize to:%d", snr, CWsize);

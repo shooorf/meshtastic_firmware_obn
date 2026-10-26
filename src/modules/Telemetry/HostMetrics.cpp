@@ -1,5 +1,6 @@
 #include "HostMetrics.h"
 #include "../mesh/generated/meshtastic/telemetry.pb.h"
+#include "ChainRelayPolicy.h"
 #include "Default.h"
 #include "MeshService.h"
 #include "NodeDB.h"
@@ -113,9 +114,10 @@ meshtastic_Telemetry HostMetricsModule::getHostMetrics()
         }
     }
 
+    const uint32_t chainRelayCount = ChainRelayPolicy::getTriggeredCount();
     t.variant.host_metrics.load1 = (directCount > 655) ? 65500 : static_cast<uint16_t>(directCount * 100);
     t.variant.host_metrics.load5 = (directSnrNegCount > 655) ? 65500 : static_cast<uint16_t>(directSnrNegCount * 100);
-    t.variant.host_metrics.load15 = 0;
+    t.variant.host_metrics.load15 = (chainRelayCount > 655) ? 65500 : static_cast<uint16_t>(chainRelayCount * 100);
     if (pos > 0) {
         t.variant.host_metrics.has_user_string = true;
     }
