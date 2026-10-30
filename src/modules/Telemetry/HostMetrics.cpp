@@ -1,20 +1,33 @@
 #include "HostMetrics.h"
 #include "../mesh/generated/meshtastic/telemetry.pb.h"
+#include "AirTime.h"
 #include "ChainRelayPolicy.h"
 #include "Default.h"
 #include "MeshService.h"
 #include "NodeDB.h"
+#include "Router.h"
+#include "Throttle.h"
 #include "UptimeClock.h"
+#include "configuration.h"
 #include "gps/RTC.h"
 #include "main.h"
 #include "memGet.h"
+#include "meshUtils.h"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 
 int32_t HostMetricsModule::runOnce()
 {
-    if (service && service->isToPhoneQueueEmpty()) {
+    bool isImpoliteRole = isSensorOrRouterRole();
+    if (((lastSentToMesh == 0) || Throttle::hasElapsed(lastSentToMesh, sendToMeshIntervalMs)) && airTime &&
+        airTime->isTxAllowedChannelUtil(!isImpoliteRole) && airTime->isTxAllowedAirUtil() &&
+        config.device.role != meshtastic_Config_DeviceConfig_Role_CLIENT_HIDDEN) {
+        if (service) {
+            sendMetrics(false);
+            lastSentToMesh = Time::skipZero(Time::getMillis());
+        }
+    } else if (service && service->isToPhoneQueueEmpty()) {
         sendMetrics(true);
     }
     return sendToPhoneIntervalMs;
@@ -41,6 +54,10 @@ bool HostMetricsModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, 
 meshtastic_MeshPacket *HostMetricsModule::allocReply()
 {
     if (currentRequest) {
+        if (isMultiHopBroadcastRequest() && !isSensorOrRouterRole()) {
+            ignoreRequest = true;
+            return NULL;
+        }
         auto req = *currentRequest;
         const auto &p = req.decoded;
         meshtastic_Telemetry scratch;
@@ -98,6 +115,7 @@ meshtastic_Telemetry HostMetricsModule::getHostMetrics()
             if (nodeInfoLiteHasUser(node) && node->short_name[0] != '\0') {
                 strncpy(shortName, node->short_name, 4);
                 shortName[4] = '\0';
+                sanitizeUtf8(shortName, sizeof(shortName));
             }
             int snrInt = static_cast<int>(std::lround(node->snr));
             if (snrInt > 99)
@@ -110,6 +128,9 @@ meshtastic_Telemetry HostMetricsModule::getHostMetrics()
             if (written > 0 && pos + static_cast<size_t>(written) < userStrCap) {
                 pos += static_cast<size_t>(written);
                 listedCount++;
+            } else {
+                userStr[pos] = '\0';
+                break;
             }
         }
     }
