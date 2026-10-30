@@ -248,7 +248,7 @@ void LoRaFEMInterface::setRxModeEnableWhenMCUSleep(void)
     } else if (fem_type == KCT8103L_PA) {
         digitalWrite(LORA_KCT8103L_PA_CSD, HIGH);
         rtc_gpio_hold_en((gpio_num_t)LORA_KCT8103L_PA_CSD);
-        digitalWrite(LORA_KCT8103L_PA_CTX, HIGH); // RX bypass while MCU sleeps
+        digitalWrite(LORA_KCT8103L_PA_CTX, lna_enabled ? LOW : HIGH);
         rtc_gpio_hold_en((gpio_num_t)LORA_KCT8103L_PA_CTX);
     }
 #elif defined(USE_GC1109_PA)
@@ -262,7 +262,7 @@ void LoRaFEMInterface::setRxModeEnableWhenMCUSleep(void)
 #elif defined(USE_KCT8103L_PA)
     enableFEMPower();
     digitalWrite(LORA_KCT8103L_PA_CSD, HIGH);
-    digitalWrite(LORA_KCT8103L_PA_CTX, HIGH); // RX bypass while MCU sleeps
+    digitalWrite(LORA_KCT8103L_PA_CTX, lna_enabled ? LOW : HIGH);
 #if defined(ARCH_ESP32)
     rtc_gpio_hold_en((gpio_num_t)LORA_PA_POWER);
     rtc_gpio_hold_en((gpio_num_t)LORA_KCT8103L_PA_CSD);
