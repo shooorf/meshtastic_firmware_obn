@@ -34,5 +34,7 @@ class HostMetricsModule : private concurrency::OSThread, public ProtobufModule<m
   private:
     meshtastic_Telemetry getHostMetrics();
 
+    uint32_t lastSentToMesh = 0;
     uint32_t sendToPhoneIntervalMs = SECONDS_IN_MINUTE * 1000;
+    uint32_t sendToMeshIntervalMs = 60 * SECONDS_IN_MINUTE * 1000;
 };
