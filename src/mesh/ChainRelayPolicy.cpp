@@ -115,6 +115,8 @@ bool shouldKeepQueuedRebroadcast(const meshtastic_MeshPacket *p, RadioInterface 
             track.countedInStats = true;
             triggeredCount++;
         }
+        LOG_DEBUG("[ChainRelay] Keep pkt 0x%08x from 0x%08x in TX queue (heardRelays=%u, effNeighbors=%u, total=%lu)", p->id,
+                  from, heardRelays, effectiveNeighbors, static_cast<unsigned long>(triggeredCount));
         return true;
     }
 
@@ -136,7 +138,9 @@ float getAdjustedRxSnr(float rxSnr)
         return rxSnr;
 
     const float bonusDb = static_cast<float>(effectiveNeighbors - (MIN_EFFECTIVE_NEIGHBORS - 1)) * SNR_BONUS_PER_NEIGHBOR_DB;
-    return std::max(SNR_BONUS_FLOOR_DB, rxSnr - bonusDb);
+    const float adjusted = std::max(SNR_BONUS_FLOOR_DB, rxSnr - bonusDb);
+    LOG_DEBUG("[ChainRelay] SNR bonus: raw=%.1f -> adj=%.1f dB (effNeighbors=%u)", rxSnr, adjusted, effectiveNeighbors);
+    return adjusted;
 }
 
 uint32_t getTriggeredCount()
