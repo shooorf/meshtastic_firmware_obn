@@ -17,6 +17,13 @@
 #include <cstdio>
 #include <cstring>
 
+static bool isSensorOrRouterRole()
+{
+    return config.device.role == meshtastic_Config_DeviceConfig_Role_SENSOR ||
+           config.device.role == meshtastic_Config_DeviceConfig_Role_ROUTER ||
+           config.device.role == meshtastic_Config_DeviceConfig_Role_ROUTER_LATE;
+}
+
 int32_t HostMetricsModule::runOnce()
 {
     bool isImpoliteRole = isSensorOrRouterRole();
